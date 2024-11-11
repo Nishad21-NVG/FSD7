@@ -1,307 +1,106 @@
-/*!
- * body-parser
- * Copyright(c) 2014 Jonathan Ong
- * Copyright(c) 2014-2015 Douglas Christopher Wilson
- * MIT Licensed
- */
+"use strict";
+const { utf8Encode, utf8DecodeWithoutBOM } = require("./encoding");
+const { percentDecodeBytes, utf8PercentEncodeString, isURLEncodedPercentEncode } = require("./percent-encoding");
 
-'use strict'
-
-/**
- * Module dependencies.
- * @private
- */
-
-var bytes = require('bytes')
-var contentType = require('content-type')
-var createError = require('http-errors')
-var debug = require('debug')('body-parser:urlencoded')
-var deprecate = require('depd')('body-parser')
-var read = require('../read')
-var typeis = require('type-is')
-
-/**
- * Module exports.
- */
-
-module.exports = urlencoded
-
-/**
- * Cache of parser modules.
- */
-
-var parsers = Object.create(null)
-
-/**
- * Create a middleware to parse urlencoded bodies.
- *
- * @param {object} [options]
- * @return {function}
- * @public
- */
-
-function urlencoded (options) {
-  var opts = options || {}
-
-  // notice because option default will flip in next major
-  if (opts.extended === undefined) {
-    deprecate('undefined extended: provide extended option')
-  }
-
-  var extended = opts.extended !== false
-  var inflate = opts.inflate !== false
-  var limit = typeof opts.limit !== 'number'
-    ? bytes.parse(opts.limit || '100kb')
-    : opts.limit
-  var type = opts.type || 'application/x-www-form-urlencoded'
-  var verify = opts.verify || false
-  var depth = typeof opts.depth !== 'number'
-    ? Number(opts.depth || 32)
-    : opts.depth
-
-  if (verify !== false && typeof verify !== 'function') {
-    throw new TypeError('option verify must be function')
-  }
-
-  // create the appropriate query parser
-  var queryparse = extended
-    ? extendedparser(opts)
-    : simpleparser(opts)
-
-  // create the appropriate type checking function
-  var shouldParse = typeof type !== 'function'
-    ? typeChecker(type)
-    : type
-
-  function parse (body) {
-    return body.length
-      ? queryparse(body)
-      : {}
-  }
-
-  return function urlencodedParser (req, res, next) {
-    if (req._body) {
-      debug('body already parsed')
-      next()
-      return
-    }
-
-    req.body = req.body || {}
-
-    // skip requests without bodies
-    if (!typeis.hasBody(req)) {
-      debug('skip empty body')
-      next()
-      return
-    }
-
-    debug('content-type %j', req.headers['content-type'])
-
-    // determine if request should be parsed
-    if (!shouldParse(req)) {
-      debug('skip parsing')
-      next()
-      return
-    }
-
-    // assert charset
-    var charset = getCharset(req) || 'utf-8'
-    if (charset !== 'utf-8') {
-      debug('invalid charset')
-      next(createError(415, 'unsupported charset "' + charset.toUpperCase() + '"', {
-        charset: charset,
-        type: 'charset.unsupported'
-      }))
-      return
-    }
-
-    // read
-    read(req, res, next, parse, debug, {
-      debug: debug,
-      encoding: charset,
-      inflate: inflate,
-      limit: limit,
-      verify: verify,
-      depth: depth
-    })
-  }
+function p(char) {
+  return char.codePointAt(0);
 }
 
-/**
- * Get the extended query parser.
- *
- * @param {object} options
- */
-
-function extendedparser (options) {
-  var parameterLimit = options.parameterLimit !== undefined
-    ? options.parameterLimit
-    : 1000
-
-  var depth = typeof options.depth !== 'number'
-    ? Number(options.depth || 32)
-    : options.depth
-  var parse = parser('qs')
-
-  if (isNaN(parameterLimit) || parameterLimit < 1) {
-    throw new TypeError('option parameterLimit must be a positive number')
-  }
-
-  if (isNaN(depth) || depth < 0) {
-    throw new TypeError('option depth must be a zero or a positive number')
-  }
-
-  if (isFinite(parameterLimit)) {
-    parameterLimit = parameterLimit | 0
-  }
-
-  return function queryparse (body) {
-    var paramCount = parameterCount(body, parameterLimit)
-
-    if (paramCount === undefined) {
-      debug('too many parameters')
-      throw createError(413, 'too many parameters', {
-        type: 'parameters.too.many'
-      })
+// https://url.spec.whatwg.org/#concept-urlencoded-parser
+function parseUrlencoded(input) {
+  const sequences = strictlySplitByteSequence(input, p("&"));
+  const output = [];
+  for (const bytes of sequences) {
+    if (bytes.length === 0) {
+      continue;
     }
 
-    var arrayLimit = Math.max(100, paramCount)
+    let name, value;
+    const indexOfEqual = bytes.indexOf(p("="));
 
-    debug('parse extended urlencoding')
-    try {
-      return parse(body, {
-        allowPrototypes: true,
-        arrayLimit: arrayLimit,
-        depth: depth,
-        strictDepth: true,
-        parameterLimit: parameterLimit
-      })
-    } catch (err) {
-      if (err instanceof RangeError) {
-        throw createError(400, 'The input exceeded the depth', {
-          type: 'querystring.parse.rangeError'
-        })
-      } else {
-        throw err
+    if (indexOfEqual >= 0) {
+      name = bytes.slice(0, indexOfEqual);
+      value = bytes.slice(indexOfEqual + 1);
+    } else {
+      name = bytes;
+      value = new Uint8Array(0);
+    }
+
+    name = replaceByteInByteSequence(name, 0x2B, 0x20);
+    value = replaceByteInByteSequence(value, 0x2B, 0x20);
+
+    const nameString = utf8DecodeWithoutBOM(percentDecodeBytes(name));
+    const valueString = utf8DecodeWithoutBOM(percentDecodeBytes(value));
+
+    output.push([nameString, valueString]);
+  }
+  return output;
+}
+
+// https://url.spec.whatwg.org/#concept-urlencoded-string-parser
+function parseUrlencodedString(input) {
+  return parseUrlencoded(utf8Encode(input));
+}
+
+// https://url.spec.whatwg.org/#concept-urlencoded-serializer
+function serializeUrlencoded(tuples, encodingOverride = undefined) {
+  let encoding = "utf-8";
+  if (encodingOverride !== undefined) {
+    // TODO "get the output encoding", i.e. handle encoding labels vs. names.
+    encoding = encodingOverride;
+  }
+
+  let output = "";
+  for (const [i, tuple] of tuples.entries()) {
+    // TODO: handle encoding override
+
+    const name = utf8PercentEncodeString(tuple[0], isURLEncodedPercentEncode, true);
+
+    let value = tuple[1];
+    if (tuple.length > 2 && tuple[2] !== undefined) {
+      if (tuple[2] === "hidden" && name === "_charset_") {
+        value = encoding;
+      } else if (tuple[2] === "file") {
+        // value is a File object
+        value = value.name;
       }
     }
-  }
-}
 
-/**
- * Get the charset of a request.
- *
- * @param {object} req
- * @api private
- */
+    value = utf8PercentEncodeString(value, isURLEncodedPercentEncode, true);
 
-function getCharset (req) {
-  try {
-    return (contentType.parse(req).parameters.charset || '').toLowerCase()
-  } catch (e) {
-    return undefined
-  }
-}
-
-/**
- * Count the number of parameters, stopping once limit reached
- *
- * @param {string} body
- * @param {number} limit
- * @api private
- */
-
-function parameterCount (body, limit) {
-  var count = 0
-  var index = 0
-
-  while ((index = body.indexOf('&', index)) !== -1) {
-    count++
-    index++
-
-    if (count === limit) {
-      return undefined
+    if (i !== 0) {
+      output += "&";
     }
+    output += `${name}=${value}`;
   }
-
-  return count
+  return output;
 }
 
-/**
- * Get parser for module name dynamically.
- *
- * @param {string} name
- * @return {function}
- * @api private
- */
-
-function parser (name) {
-  var mod = parsers[name]
-
-  if (mod !== undefined) {
-    return mod.parse
+function strictlySplitByteSequence(buf, cp) {
+  const list = [];
+  let last = 0;
+  let i = buf.indexOf(cp);
+  while (i >= 0) {
+    list.push(buf.slice(last, i));
+    last = i + 1;
+    i = buf.indexOf(cp, last);
   }
-
-  // this uses a switch for static require analysis
-  switch (name) {
-    case 'qs':
-      mod = require('qs')
-      break
-    case 'querystring':
-      mod = require('querystring')
-      break
+  if (last !== buf.length) {
+    list.push(buf.slice(last));
   }
-
-  // store to prevent invoking require()
-  parsers[name] = mod
-
-  return mod.parse
+  return list;
 }
 
-/**
- * Get the simple query parser.
- *
- * @param {object} options
- */
-
-function simpleparser (options) {
-  var parameterLimit = options.parameterLimit !== undefined
-    ? options.parameterLimit
-    : 1000
-  var parse = parser('querystring')
-
-  if (isNaN(parameterLimit) || parameterLimit < 1) {
-    throw new TypeError('option parameterLimit must be a positive number')
+function replaceByteInByteSequence(buf, from, to) {
+  let i = buf.indexOf(from);
+  while (i >= 0) {
+    buf[i] = to;
+    i = buf.indexOf(from, i + 1);
   }
-
-  if (isFinite(parameterLimit)) {
-    parameterLimit = parameterLimit | 0
-  }
-
-  return function queryparse (body) {
-    var paramCount = parameterCount(body, parameterLimit)
-
-    if (paramCount === undefined) {
-      debug('too many parameters')
-      throw createError(413, 'too many parameters', {
-        type: 'parameters.too.many'
-      })
-    }
-
-    debug('parse urlencoding')
-    return parse(body, undefined, undefined, { maxKeys: parameterLimit })
-  }
+  return buf;
 }
 
-/**
- * Get the simple type checker.
- *
- * @param {string} type
- * @return {function}
- */
-
-function typeChecker (type) {
-  return function checkType (req) {
-    return Boolean(typeis(req, type))
-  }
-}
+module.exports = {
+  parseUrlencodedString,
+  serializeUrlencoded
+};

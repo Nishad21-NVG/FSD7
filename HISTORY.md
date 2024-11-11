@@ -1,58 +1,29 @@
-2.8.5 / 2018-11-04
+1.1.2 / 2016-01-17
 ==================
 
-  * Fix setting `maxAge` option to `0`
+  * perf: enable strict mode
 
-2.8.4 / 2017-07-12
+1.1.1 / 2014-12-30
 ==================
 
-  * Work-around Safari bug in default pre-flight response
+  * Improve `browserify` support
 
-2.8.3 / 2017-03-29
+1.1.0 / 2014-07-05
 ==================
 
-  * Fix error when options delegate missing `methods` option
-
-2.8.2 / 2017-03-28
+  * Add `CONNECT` method
+ 
+1.0.1 / 2014-06-02
 ==================
 
-  * Fix error when frozen options are passed
-  * Send "Vary: Origin" when using regular expressions
-  * Send "Vary: Access-Control-Request-Headers" when dynamic `allowedHeaders`
+  * Fix module to work with harmony transform
 
-2.8.1 / 2016-09-08
+1.0.0 / 2014-05-08
 ==================
 
-This release only changed documentation.
+  * Add `PURGE` method
 
-2.8.0 / 2016-08-23
+0.1.0 / 2013-10-28
 ==================
 
-  * Add `optionsSuccessStatus` option
-
-2.7.2 / 2016-08-23
-==================
-
-  * Fix error when Node.js running in strict mode
-
-2.7.1 / 2015-05-28
-==================
-
-  * Move module into expressjs organization
-
-2.7.0 / 2015-05-28
-==================
-
-  * Allow array of matching condition as `origin` option
-  * Allow regular expression as `origin` option
-
-2.6.1 / 2015-05-28
-==================
-
-  * Update `license` in package.json
-
-2.6.0 / 2015-04-27
-==================
-
-  * Add `preflightContinue` option
-  * Fix "Vary: Origin" header added for "*"
+  * Add `http.METHODS` support
